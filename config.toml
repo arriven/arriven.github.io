@@ -1,4 +1,45 @@
-baseURL = 'http://example.org/'
+baseURL = 'https://arriven.github.io/'
 languageCode = 'en-us'
-title = 'My New Hugo Site'
+title = "arriven.wtf"
+keywords = ""
+menuMore = "Show more"
+readMore = "Read more"
+readOtherPosts = "Read other posts"
 theme = 'terminal'
+enableGitInfo = true
+enableEmoji = true
+
+[params]
+centerTheme = true
+fullWidthTheme = false
+
+[params.logo]
+logoText = "arriven.wtf"
+logoHomeLink = "/"
+
+[[params.links]]
+text = "Github"
+href = "https://github.com/arriven"
+
+[[params.links]]
+text = "Mastodon"
+href = "https://hachyderm.io/@arriven"
+
+[[params.links]]
+text = "LinkedIn"
+href = "https://www.linkedin.com/in/arriven/"
+
+[[params.links]]
+text = "Mail"
+href = "mailto:inbox@arriven.wtf"
+
+[menu]
+[[menu.main]]
+identifier = "about"
+name = "About"
+url = "/about"
+
+[[menu.main]]
+identifier = "links"
+name = "Links"
+url = "/links"
