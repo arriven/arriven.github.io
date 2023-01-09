@@ -275,3 +275,5 @@ I already tried to reference each profile in the article but it probably won't h
 | sccache         | 490 mb     | 25s                        | 10s             | 13m 58s              | 2m 10s                               | 2m 50s                           |
 
 As you can notice, until [this](https://github.com/rust-lang/cargo/issues/11083) is resolved, the only ways to cache packages like `rocksdb` are caching the whole `$CARGO_HOME` folder or using a third-party tool like `sccache`
+
+**Thanks to [Predrag Gruevski](https://hachyderm.io/@predrag), [Anthony Bondarenko](https://github.com/yneth), and a few folks who preferred to remain unnamed, for feedback on drafts of this post. Any mistakes are mine alone.**
