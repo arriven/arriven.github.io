@@ -1,4 +1,4 @@
-baseURL = 'http://blog.arriven.wtf/'
+baseURL = 'https://blog.arriven.wtf/'
 languageCode = 'en-us'
 title = "arriven.wtf"
 keywords = ""
