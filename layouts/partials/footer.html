@@ -4,7 +4,7 @@
         <div class="copyright copyright--user">
             <span>
                 {{ range $i, $e := $.Site.Params.Links }}
-                {{ if $i }} :: {{ end }}<a href='{{index . "href" | safeHTML}}'>{{index . "text" | safeHTML}}</a>
+                {{ if $i }} :: {{ end }}<a rel="me" href='{{index . "href" | safeHTML}}'>{{index . "text" | safeHTML}}</a>
                 {{ end }}
             </span>
         </div>
