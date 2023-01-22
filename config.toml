@@ -8,6 +8,7 @@ readOtherPosts = "Read other posts"
 theme = 'terminal'
 enableGitInfo = true
 enableEmoji = true
+googleAnalytics = 'G-D4PPS2HRE0'
 
 [params]
 centerTheme = true
