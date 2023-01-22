@@ -1,8 +1,10 @@
 +++
-title = "Rust Ci Caching"
+title = "Rust CI Cache"
 date = "2023-01-09T16:28:35+02:00"
 author = "Bohdan Ivashko"
-draft = true
+tags = ["rust", "ci", "cache"]
+keywords = ["rust", "ci", "cache", "build", "ci/cd", "github"]
+description = "Deeper dive into different options for caching rust builds on CI and their problems"
 +++
 
 Even though rust generally has better build times than C++ it still compares poorly to some other languages and CI workflows can take quite some time to run from scratch (i.e. one of the projects I've worked on took 40 minutes to run its' suite on github actions default workers, even though the project is far from being huge). Long workflows can reduce iteration speed, especially as teams grow, so generally we want to speed up the CI, and what's a better way to do that than to use a good old cache? Well, as it turns out, caching build dependencies and artifacts in rust may be not as straightforward as it seems at the first glance.
@@ -13,11 +15,11 @@ If you were to take a look at the [cargo book](https://doc.rust-lang.org/cargo/i
 
 I'll be using a small personal project inspired by one of the services I had to do for work. Originally it was written in a different language but to represent it in rust I've decided to use axum as a web server, sled/rocksdb for storage, tracing for logging, and clap for cmdline args. It's a very simple service but it has enought dependencies to demonstrate the impact of different caching approaches. You can find the repo [here](https://github.com/arriven/rust-ci-playground).
 
-The repo also includes a github actions workflow that has couple different cache configurations that I'll be comparing further.
+The repo also includes a github actions workflow that has a couple of different cache configurations that I'll be comparing further.
 
 ## Caching downloaded packages
 
-According to this [chapter](https://doc.rust-lang.org/cargo/guide/cargo-home.html) of the cargo book in order to cache downloaded packages all you need to do is to simply cache `$CARGO_HOME` directory, but to be more efficient you can cache only specific subdirectories in it (`registry/cache/`, `registry/index/`, and `git/db/`. it also specifies that you could cache `bin/` subdirectory but that one is used for installed tools and you would often prefer to use other means to get them faster, like using an action that downloads pre-built binaries or using a build image with all the tools already pre-installed). In order to test this I included a `home` cache action (yes, I'm not very creative when it comes to naming) into the repo that uses a following cache configuration:
+According to this [chapter](https://doc.rust-lang.org/cargo/guide/cargo-home.html) of the cargo book all you need to do in order to cache downloaded packages is to simply cache `$CARGO_HOME` directory, but to be more efficient you can cache only specific subdirectories in it (`registry/cache/`, `registry/index/`, and `git/db/`. it also specifies that you could cache `bin/` subdirectory but that one is used for installed tools and you would often prefer to use other means to get them faster, like using an action that downloads pre-built binaries or using a build image with all the tools already pre-installed (the latter has questionable results on [github](https://github.com/actions/cache/issues/924))). In order to test this I included a `home` cache action (yes, I'm not very creative when it comes to naming) into the repo that uses a following cache configuration:
 
 ```yaml
 - uses: actions/cache@v3
@@ -29,11 +31,11 @@ According to this [chapter](https://doc.rust-lang.org/cargo/guide/cargo-home.htm
     key: ${{ runner.os }}-home-${{ hashFiles('**/Cargo.lock') }}
 ```
 
-**Note**: if you're wondering why the key uses hash of all the `Cargo.lock` files in the workspace - it's because caches in github actions are [immutable](https://github.com/actions/toolkit/issues/505) so in order to have a newer entry you need to have a different key.
+**Note**: if you're wondering why the key uses hash of all the `Cargo.lock` files in the workspace - it's because caches in github actions are [immutable](https://github.com/actions/toolkit/issues/505) (yes, even if you use a [fork](https://github.com/martijnhols/actions-cache) that allows you to push them at will) so in order to have a newer entry you need to have a different key.
 
 When running it, the first run that doesn't have any cache looks like this:
 
-```sh
+```bash
 $ cargo test --locked --no-run
     Updating crates.io index
  Downloading crates ...
@@ -56,7 +58,7 @@ $ cargo test --locked --no-run
 
 When running it for the second time the logs look slightly different:
 
-```sh
+```bash
 Run cargo test --locked --no-run
    Compiling proc-macro2 v1.0.49
    Compiling unicode-ident v1.0.6
@@ -73,7 +75,7 @@ As you can notice, we no longer have to update crates.io index and it doesn't ne
 
 ## Caching build artifacts
 
-Now let's take a look at another [chapter](https://doc.rust-lang.org/cargo/guide/build-cache.html) of the cargo book. According to it we can cache the build artifacts by caching the `target` directory of our workspace or by using some third-party tools like [sccache](https://github.com/mozilla/sccache) (**Note**: there are also other ways to achieve this if you use other build systems than cargo but I won't cover that here). All of the approaches benefit from disabling incremental build since it only slows down compilation and doesn't work well with caching.
+Now let's take a look at another [chapter](https://doc.rust-lang.org/cargo/guide/build-cache.html) of the cargo book. According to it we can cache the build artifacts by caching the `target` directory of our workspace or by using some third-party tools like [sccache](https://github.com/mozilla/sccache) (**Note**: there are also other ways to achieve this if you use build systems other than cargo but I won't cover that here). All of the approaches benefit from disabling incremental build since it only slows down compilation and doesn't work well with caching.
 
 ### **`target`-based cache**
 
@@ -92,7 +94,7 @@ I'll be using the following cache configuration to test it out (called `home_and
 
 Again, the first run didn't show anything unexpected, without the cache being populated we still have to download and compile everything:
 
-```sh
+```bash
 $ cargo test --locked --no-run
     Updating crates.io index
  Downloading crates ...
@@ -115,14 +117,14 @@ $ cargo test --locked --no-run
 
 On the second run the situation is a lot better, though:
 
-```sh
+```bash
 $ cargo test --locked --no-run
    Compiling linkmapper v0.1.0 (/home/runner/work/rust-ci-playground/rust-ci-playground)
     Finished test [unoptimized + debuginfo] target(s) in 3.73s
   Executable unittests src/main.rs (target/debug/deps/linkmapper-da17f15a9210ca29)
 ```
 
-As you can notice, now we didn't have to neither download nor compile any of the crates. But wait, our own code didn't change between the runs too, shouldn't it be cached? Why do we see `Compiling linkmapper v0.1.0 ...` in the logs? Well, as it turns out, cargo uses mtime to detect whether the source code has been changed and since CI runners clone the repo from scratch for each job it results in updated mtime (dependencies are tracked based on their version/ref and aren't affected by this). There's an [open issue](https://github.com/rust-lang/cargo/issues/6529) to address that but for now if your project has a lot of custom code compared to dependencies you can restore the mtime manually to the time of the commit using [this](https://github.com/chetan/git-restore-mtime-action) github action or its' [underlying script](https://github.com/chetan/git-restore-mtime-action/blob/master/src/git-restore-mtime-bare) if you use some other CI systems (thankfully it doesn't have a lot of dependencies). My updated cache configuration looks like this:
+As you can notice, now we didn't have to neither download nor compile any of the crates. But wait, our own code didn't change between the runs too, shouldn't it be cached? Why do we see `Compiling linkmapper v0.1.0 ...` in the logs? Well, as it turns out, cargo uses mtime to detect whether the source code has been changed and since CI runners clone the repo from scratch for each job it results in updated mtime (dependencies are unpacked with tar which saves mtime and aren't affected by this). There's an [open issue](https://github.com/rust-lang/cargo/issues/6529) to address that but for now if your project has a lot of custom code compared to dependencies you can restore the mtime manually to the time of the commit using [this](https://github.com/chetan/git-restore-mtime-action) github action or its' [underlying script](https://github.com/chetan/git-restore-mtime-action/blob/master/src/git-restore-mtime-bare) if you use some other CI systems (thankfully the script doesn't have a lot of dependencies). My updated cache configuration looks like this:
 
 ```yaml
 - uses: actions/cache@v3
@@ -139,19 +141,19 @@ As you can notice, now we didn't have to neither download nor compile any of the
 
 Running it again finally gives us the expected result, and the overall build becomes almost instant for the perfect cache hit:
 
-```sh
+```bash
 $ cargo test --locked --no-run
     Finished test [unoptimized + debuginfo] target(s) in 0.62s
   Executable unittests src/main.rs (target/debug/deps/linkmapper-da17f15a9210ca29)
 ```
 
-I've never seen this approach being used even though the only downside to this approach I know of is that it completely replicates the way `cargo` caches dependencies locally: if you ever had cases where it didn't pick up changes to the code introduced by `git pull` or similar - there's a non-zero chance you can encounter that on CI. Manually cleaning caches on github is fairly easy and you can even use PR labels to conditionally disable cache usage so my guess is that this approach isn't widely adopted because most people just don't know about it (this is kind of confirmed by people who were reviewsing the draft of this article).
+I've never seen this approach being used even though its' only downside I know of is that it completely replicates the way `cargo` caches dependencies locally: if you ever had cases where `cargo` didn't pick up changes to the code introduced by `git pull` or similar - there's a non-zero chance you can encounter that on CI. Manually cleaning caches on github is fairly easy (unless you have lots of them) and you can use PR labels to conditionally disable cache usage so my guess is that this approach isn't widely adopted because most people just don't know about it (this is kind of confirmed by people who were reviewing the draft of this article).
 
 **Except if we use `rocksdb` instead of `sled`**
 
 For some reason not including `$CARGO_HOME/registry/src` to the cache leads to full recompilation of `librocksdb-sys` and everything that depends on it (~I suspect `bindgen` as the culprit but this needs further testing~ Edit: it turns out there's an [issue](https://github.com/rust-lang/cargo/issues/11083) and it's caused by `rocksdb` using `rerun-if-changed` on a folder in `build.rs`):
 
-```sh
+```bash
 $ cargo test --locked --no-run
    Compiling librocksdb-sys v0.8.0+7.4.4
    Compiling rocksdb v0.19.0
@@ -173,11 +175,11 @@ Yes, it takes more than 9 minutes to compile `rocksdb` on the github runner. Thi
   if: ${{ inputs.restore_mtime }}
 ```
 
-**Note:** based on my [tests](https://github.com/arriven/rust-ci-playground/actions/runs/3782411644/jobs/6430124523) it seems like even just adding `$CARGO_HOME/registry/src` to the `home_and_target` cache is enought to fix this, but since `$CARGO_HOME` content is unstable it's safer to just cache the full thing, it's not that much overhead compared to the `target` folder size.
+**Note:** based on my [tests](https://github.com/arriven/rust-ci-playground/actions/runs/3782411644/jobs/6430124523) just adding `$CARGO_HOME/registry/src` to the `home_and_target` cache is enought to fix this, but since `$CARGO_HOME` content is unstable it's safer to just cache the full thing, it's not that much overhead compared to the `target` folder size.
 
 **Note 2:** similar issue occurs if you have a git-based dependency and don't include `$CARGO_HOME/git/checkouts` into the cache, except in that case it also forces cargo to re-download any git submodule that package depends on
 
-```sh
+```bash
 $ cargo test --locked --no-run
     Finished test [unoptimized + debuginfo] target(s) in 1.86s
   Executable unittests src/main.rs (target/debug/deps/linkmapper-6393465c78bf12f8)
@@ -191,7 +193,7 @@ If you go down this road and only care about caching dependencies (and don't hav
 
 **Note**: it's possible to only cache the `target` dir and avoid caching `$CARGO_HOME` and it even will result in almost no recompilation (`rocksdb` is one of the exceptions again) but it's a rather weird caching setup, especially considering the size difference between cargo home and build artifacts for larger projects. Still, here's a build log for it to confirm that it works as expected if you're interested:
 
-```sh
+```bash
 $ cargo build
     Updating crates.io index
   Downloaded fnv v1.0.7
@@ -242,7 +244,7 @@ sccache:
 
 ## Results
 
-In the end, I'd like to bring you a comparison table of all the approaches covered here. Please note that Github Actions public runners can fluctuate in performance so I did notice some runs take +-25% more or less time to complete without any changes to the code or action but it should still be enough to see general tendencies (but it does lead to some weird results like when enabling mtime restore for `sccache` action leads to 20-40s slowdown, even though mtime doesn't affect the work done in the slightest)
+In the end, I'd like to bring you a comparison table of all the approaches covered here. Please note that Github Actions public runners can fluctuate in performance so I did notice some runs take up to 25% more or less time to complete without any changes to the code or action but it should still be enough to see general tendencies (it does lead to some weird results like when enabling mtime restore for `sccache` action leads to 20-40s slowdown, even though mtime doesn't affect the work done there in the slightest)
 
 ### `cache profile` overview
 
@@ -274,6 +276,6 @@ I already tried to reference each profile in the article but it probably won't h
 | swatinem        | 730 mb     | 15s                        | 23s             | 9m 0s                | 8m 26s                               | 10m 16s                          |
 | sccache         | 490 mb     | 25s                        | 10s             | 13m 58s              | 2m 10s                               | 2m 50s                           |
 
-As you can notice, until [this](https://github.com/rust-lang/cargo/issues/11083) is resolved, the only ways to cache packages like `rocksdb` are caching the whole `$CARGO_HOME` folder or using a third-party tool like `sccache`
+As you can notice, until [this](https://github.com/rust-lang/cargo/issues/11083) is resolved, the only ways to save time caching packages like `rocksdb` are caching the whole `$CARGO_HOME` folder or using a third-party tool like `sccache`
 
 **Shouts out to [Predrag Gruevski](https://hachyderm.io/@predrag), [Anthony Bondarenko](https://github.com/yneth), and a few folks who preferred to remain unnamed, for feedback on drafts of this post. Any mistakes are mine alone.**
