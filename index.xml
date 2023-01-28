@@ -22,13 +22,13 @@ FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT&amp;hellip;&lt;/del>&lt;/p>
 &lt;li>&lt;a href="https://hachyderm.io/@arriven">Mastodon&lt;/a>&lt;/li>
 &lt;li>&lt;a href="https://www.linkedin.com/in/arriven/">LinkedIn&lt;/a>&lt;/li>
 &lt;li>&lt;a href="mailto:inbox@arriven.wtf">Mail&lt;/a>&lt;/li>
-&lt;/ul></content></item><item><title>Rust CI Cache</title><link>https://blog.arriven.wtf/posts/rust-ci-cache/</link><pubDate>Mon, 09 Jan 2023 16:28:35 +0200</pubDate><guid>https://blog.arriven.wtf/posts/rust-ci-cache/</guid><description>Even though rust generally has better build times than C++ it still compares poorly to some other languages and CI workflows can take quite some time to run from scratch (i.e. one of the projects I&amp;rsquo;ve worked on took 40 minutes to run its&amp;rsquo; suite on github actions default workers, even though the project is far from being huge). Long workflows can reduce iteration speed, especially as teams grow, so generally we want to speed up the CI, and what&amp;rsquo;s a better way to do that than to use a good old cache?</description><content>&lt;p>Even though rust generally has better build times than C++ it still compares poorly to some other languages and CI workflows can take quite some time to run from scratch (i.e. one of the projects I&amp;rsquo;ve worked on took 40 minutes to run its&amp;rsquo; suite on github actions default workers, even though the project is far from being huge). Long workflows can reduce iteration speed, especially as teams grow, so generally we want to speed up the CI, and what&amp;rsquo;s a better way to do that than to use a good old cache? Well, as it turns out, caching build dependencies and artifacts in rust may be not as straightforward as it seems at the first glance.&lt;/p>
+&lt;/ul></content></item><item><title>Rust CI Cache</title><link>https://blog.arriven.wtf/posts/rust-ci-cache/</link><pubDate>Mon, 09 Jan 2023 16:28:35 +0200</pubDate><guid>https://blog.arriven.wtf/posts/rust-ci-cache/</guid><description>Even though rust generally has better build times than C++ it still compares poorly to some other languages and CI workflows can take quite some time to run from scratch (i.e. one of the projects I&amp;rsquo;ve worked on took 40 minutes to run its suite on github actions default workers, even though the project is far from being huge). Long workflows can reduce iteration speed, especially as teams grow, so generally we want to speed up the CI, and what&amp;rsquo;s a better way to do that than to use a good old cache?</description><content>&lt;p>Even though rust generally has better build times than C++ it still compares poorly to some other languages and CI workflows can take quite some time to run from scratch (i.e. one of the projects I&amp;rsquo;ve worked on took 40 minutes to run its suite on github actions default workers, even though the project is far from being huge). Long workflows can reduce iteration speed, especially as teams grow, so generally we want to speed up the CI, and what&amp;rsquo;s a better way to do that than to use a good old cache? Well, as it turns out, caching build dependencies and artifacts in rust may be not as straightforward as it seems at the first glance.&lt;/p>
 &lt;h2 id="general-approach">General approach&lt;/h2>
 &lt;p>If you were to take a look at the &lt;a href="https://doc.rust-lang.org/cargo/index.html">cargo book&lt;/a> you&amp;rsquo;d notice that it already covers the basics on how to cache downloaded &lt;a href="https://doc.rust-lang.org/cargo/guide/cargo-home.html">packages&lt;/a> and &lt;a href="https://doc.rust-lang.org/cargo/guide/build-cache.html">build artifacts&lt;/a>. But if it was as simple as that this article wouldn&amp;rsquo;t exist in the first place, so let&amp;rsquo;s dig a bit deeper.&lt;/p>
 &lt;p>I&amp;rsquo;ll be using a small personal project inspired by one of the services I had to do for work. Originally it was written in a different language but to represent it in rust I&amp;rsquo;ve decided to use axum as a web server, sled/rocksdb for storage, tracing for logging, and clap for cmdline args. It&amp;rsquo;s a very simple service but it has enought dependencies to demonstrate the impact of different caching approaches. You can find the repo &lt;a href="https://github.com/arriven/rust-ci-playground">here&lt;/a>.&lt;/p>
 &lt;p>The repo also includes a github actions workflow that has a couple of different cache configurations that I&amp;rsquo;ll be comparing further.&lt;/p>
 &lt;h2 id="caching-downloaded-packages">Caching downloaded packages&lt;/h2>
-&lt;p>According to this &lt;a href="https://doc.rust-lang.org/cargo/guide/cargo-home.html">chapter&lt;/a> of the cargo book all you need to do in order to cache downloaded packages is to simply cache &lt;code>$CARGO_HOME&lt;/code> directory, but to be more efficient you can cache only specific subdirectories in it (&lt;code>registry/cache/&lt;/code>, &lt;code>registry/index/&lt;/code>, and &lt;code>git/db/&lt;/code>. it also specifies that you could cache &lt;code>bin/&lt;/code> subdirectory but that one is used for installed tools and you would often prefer to use other means to get them faster, like using an action that downloads pre-built binaries or using a build image with all the tools already pre-installed (the latter has questionable results on &lt;a href="https://github.com/actions/cache/issues/924">github&lt;/a>)). In order to test this I included a &lt;code>home&lt;/code> cache action (yes, I&amp;rsquo;m not very creative when it comes to naming) into the repo that uses a following cache configuration:&lt;/p>
+&lt;p>According to this &lt;a href="https://doc.rust-lang.org/cargo/guide/cargo-home.html">chapter&lt;/a> of the cargo book all you need to do in order to cache downloaded packages is to simply cache &lt;code>$CARGO_HOME&lt;/code> directory, but to be more efficient you can cache only specific subdirectories in it (&lt;code>registry/cache/&lt;/code>, &lt;code>registry/index/&lt;/code>, and &lt;code>git/db/&lt;/code>. it also specifies that you could cache &lt;code>bin/&lt;/code> subdirectory but that one is used for installed tools and you would often prefer to use other means to get them faster, like using an action that downloads pre-built binaries or using a build image with all the tools already pre-installed (the latter has &lt;a href="https://github.com/actions/cache/issues/924">questionable results on github&lt;/a>)). In order to test this I included a &lt;code>home&lt;/code> cache action (yes, I&amp;rsquo;m not very creative when it comes to naming) into the repo that uses a following cache configuration:&lt;/p>
 &lt;div class="highlight">&lt;pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;">&lt;code class="language-yaml" data-lang="yaml">&lt;span style="display:flex;">&lt;span>- &lt;span style="color:#f92672">uses&lt;/span>: &lt;span style="color:#ae81ff">actions/cache@v3&lt;/span>
 &lt;/span>&lt;/span>&lt;span style="display:flex;">&lt;span> &lt;span style="color:#f92672">with&lt;/span>:
 &lt;/span>&lt;/span>&lt;span style="display:flex;">&lt;span> &lt;span style="color:#f92672">path&lt;/span>: |&lt;span style="color:#e6db74">
@@ -36,7 +36,7 @@ FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT&amp;hellip;&lt;/del>&lt;/p>
 &lt;/span>&lt;/span>&lt;/span>&lt;span style="display:flex;">&lt;span>&lt;span style="color:#e6db74"> ~/.cargo/registry/cache/
 &lt;/span>&lt;/span>&lt;/span>&lt;span style="display:flex;">&lt;span>&lt;span style="color:#e6db74"> ~/.cargo/git/db/&lt;/span>
 &lt;/span>&lt;/span>&lt;span style="display:flex;">&lt;span> &lt;span style="color:#f92672">key&lt;/span>: &lt;span style="color:#ae81ff">${{ runner.os }}-home-${{ hashFiles(&amp;#39;**/Cargo.lock&amp;#39;) }}&lt;/span>
-&lt;/span>&lt;/span>&lt;/code>&lt;/pre>&lt;/div>&lt;p>&lt;strong>Note&lt;/strong>: if you&amp;rsquo;re wondering why the key uses hash of all the &lt;code>Cargo.lock&lt;/code> files in the workspace - it&amp;rsquo;s because caches in github actions are &lt;a href="https://github.com/actions/toolkit/issues/505">immutable&lt;/a> (yes, even if you use a &lt;a href="https://github.com/martijnhols/actions-cache">fork&lt;/a> that allows you to push them at will) so in order to have a newer entry you need to have a different key.&lt;/p>
+&lt;/span>&lt;/span>&lt;/code>&lt;/pre>&lt;/div>&lt;p>&lt;strong>Note&lt;/strong>: if you&amp;rsquo;re wondering why the key uses hash of all the &lt;code>Cargo.lock&lt;/code> files in the workspace - it&amp;rsquo;s because &lt;a href="https://github.com/actions/toolkit/issues/505">caches in github actions are immutable&lt;/a> (yes, even if you use a &lt;a href="https://github.com/martijnhols/actions-cache">fork&lt;/a> that allows you to push them at will) so in order to have a newer entry you need to have a different key.&lt;/p>
 &lt;p>When running it, the first run that doesn&amp;rsquo;t have any cache looks like this:&lt;/p>
 &lt;div class="highlight">&lt;pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;">&lt;code class="language-bash" data-lang="bash">&lt;span style="display:flex;">&lt;span>$ cargo test --locked --no-run
 &lt;/span>&lt;/span>&lt;span style="display:flex;">&lt;span> Updating crates.io index
@@ -67,9 +67,9 @@ FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT&amp;hellip;&lt;/del>&lt;/p>
 &lt;/span>&lt;/span>&lt;span style="display:flex;">&lt;span> Compiling linkmapper v0.1.0 &lt;span style="color:#f92672">(&lt;/span>/home/runner/work/rust-ci-playground/rust-ci-playground&lt;span style="color:#f92672">)&lt;/span>
 &lt;/span>&lt;/span>&lt;span style="display:flex;">&lt;span> Finished test &lt;span style="color:#f92672">[&lt;/span>unoptimized + debuginfo&lt;span style="color:#f92672">]&lt;/span> target&lt;span style="color:#f92672">(&lt;/span>s&lt;span style="color:#f92672">)&lt;/span> in 52.84s
 &lt;/span>&lt;/span>&lt;span style="display:flex;">&lt;span> Executable unittests src/main.rs &lt;span style="color:#f92672">(&lt;/span>target/debug/deps/linkmapper-da17f15a9210ca29&lt;span style="color:#f92672">)&lt;/span>
-&lt;/span>&lt;/span>&lt;/code>&lt;/pre>&lt;/div>&lt;p>As you can notice, we no longer have to update crates.io index and it doesn&amp;rsquo;t need to re-download the crates. This shaves about 30-45s off of the overall build time, which is nice. The cache ends up taking 86mb of space after being compressed by github (100mb for the &lt;code>rocksdb&lt;/code> version), so it probably won&amp;rsquo;t result in any cache eviction &lt;a href="https://docs.github.com/en/actions/using-workflows/caching-dependencies-to-speed-up-workflows#force-deleting-cache-entries">issues&lt;/a>.&lt;/p>
+&lt;/span>&lt;/span>&lt;/code>&lt;/pre>&lt;/div>&lt;p>As you can notice, we no longer have to update crates.io index and it doesn&amp;rsquo;t need to re-download the crates. This shaves about 30-45s off of the overall build time, which is nice. The cache ends up taking 86mb of space after being compressed by github (100mb for the &lt;code>rocksdb&lt;/code> version), so it probably won&amp;rsquo;t result in any &lt;a href="https://docs.github.com/en/actions/using-workflows/caching-dependencies-to-speed-up-workflows#force-deleting-cache-entries">cache eviction issues&lt;/a>.&lt;/p>
 &lt;h2 id="caching-build-artifacts">Caching build artifacts&lt;/h2>
-&lt;p>Now let&amp;rsquo;s take a look at another &lt;a href="https://doc.rust-lang.org/cargo/guide/build-cache.html">chapter&lt;/a> of the cargo book. According to it we can cache the build artifacts by caching the &lt;code>target&lt;/code> directory of our workspace or by using some third-party tools like &lt;a href="https://github.com/mozilla/sccache">sccache&lt;/a> (&lt;strong>Note&lt;/strong>: there are also other ways to achieve this if you use build systems other than cargo but I won&amp;rsquo;t cover that here). All of the approaches benefit from disabling incremental build since it only slows down compilation and doesn&amp;rsquo;t work well with caching.&lt;/p>
+&lt;p>Now let&amp;rsquo;s take a look at another &lt;a href="https://doc.rust-lang.org/cargo/guide/build-cache.html">chapter of the cargo book&lt;/a>. According to it we can cache the build artifacts by caching the &lt;code>target&lt;/code> directory of our workspace or by using some third-party tools like &lt;a href="https://github.com/mozilla/sccache">sccache&lt;/a> (&lt;strong>Note&lt;/strong>: there are also other ways to achieve this if you use build systems other than cargo but I won&amp;rsquo;t cover that here). All of the approaches benefit from disabling incremental build since it only slows down compilation and doesn&amp;rsquo;t work well with caching.&lt;/p>
 &lt;h3 id="target-based-cache">&lt;strong>&lt;code>target&lt;/code>-based cache&lt;/strong>&lt;/h3>
 &lt;p>I&amp;rsquo;ll be using the following cache configuration to test it out (called &lt;code>home_and_target&lt;/code> in the workflow file):&lt;/p>
 &lt;div class="highlight">&lt;pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;">&lt;code class="language-yaml" data-lang="yaml">&lt;span style="display:flex;">&lt;span>- &lt;span style="color:#f92672">uses&lt;/span>: &lt;span style="color:#ae81ff">actions/cache@v3&lt;/span>
@@ -104,7 +104,7 @@ FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT&amp;hellip;&lt;/del>&lt;/p>
 &lt;/span>&lt;/span>&lt;span style="display:flex;">&lt;span> Compiling linkmapper v0.1.0 &lt;span style="color:#f92672">(&lt;/span>/home/runner/work/rust-ci-playground/rust-ci-playground&lt;span style="color:#f92672">)&lt;/span>
 &lt;/span>&lt;/span>&lt;span style="display:flex;">&lt;span> Finished test &lt;span style="color:#f92672">[&lt;/span>unoptimized + debuginfo&lt;span style="color:#f92672">]&lt;/span> target&lt;span style="color:#f92672">(&lt;/span>s&lt;span style="color:#f92672">)&lt;/span> in 3.73s
 &lt;/span>&lt;/span>&lt;span style="display:flex;">&lt;span> Executable unittests src/main.rs &lt;span style="color:#f92672">(&lt;/span>target/debug/deps/linkmapper-da17f15a9210ca29&lt;span style="color:#f92672">)&lt;/span>
-&lt;/span>&lt;/span>&lt;/code>&lt;/pre>&lt;/div>&lt;p>As you can notice, now we didn&amp;rsquo;t have to neither download nor compile any of the crates. But wait, our own code didn&amp;rsquo;t change between the runs too, shouldn&amp;rsquo;t it be cached? Why do we see &lt;code>Compiling linkmapper v0.1.0 ...&lt;/code> in the logs? Well, as it turns out, cargo uses mtime to detect whether the source code has been changed and since CI runners clone the repo from scratch for each job it results in updated mtime (dependencies are unpacked with tar which saves mtime and aren&amp;rsquo;t affected by this). There&amp;rsquo;s an &lt;a href="https://github.com/rust-lang/cargo/issues/6529">open issue&lt;/a> to address that but for now if your project has a lot of custom code compared to dependencies you can restore the mtime manually to the time of the commit using &lt;a href="https://github.com/chetan/git-restore-mtime-action">this&lt;/a> github action or its&amp;rsquo; &lt;a href="https://github.com/chetan/git-restore-mtime-action/blob/master/src/git-restore-mtime-bare">underlying script&lt;/a> if you use some other CI systems (thankfully the script doesn&amp;rsquo;t have a lot of dependencies). My updated cache configuration looks like this:&lt;/p>
+&lt;/span>&lt;/span>&lt;/code>&lt;/pre>&lt;/div>&lt;p>As you can notice, now we didn&amp;rsquo;t have to neither download nor compile any of the crates. But wait, our own code didn&amp;rsquo;t change between the runs too, shouldn&amp;rsquo;t it be cached? Why do we see &lt;code>Compiling linkmapper v0.1.0 ...&lt;/code> in the logs? Well, as it turns out, cargo uses mtime to detect whether the source code has been changed and since CI runners clone the repo from scratch for each job it results in updated mtime (dependencies are unpacked with tar which saves mtime and aren&amp;rsquo;t affected by this). There&amp;rsquo;s an &lt;a href="https://github.com/rust-lang/cargo/issues/6529">open issue&lt;/a> to address that but for now if your project has a lot of custom code compared to dependencies you can restore the mtime manually to the time of the commit using a &lt;a href="https://github.com/chetan/git-restore-mtime-action">github action&lt;/a> or its &lt;a href="https://github.com/chetan/git-restore-mtime-action/blob/master/src/git-restore-mtime-bare">underlying script&lt;/a> if you use some other CI systems (thankfully the script doesn&amp;rsquo;t have a lot of dependencies). My updated cache configuration looks like this:&lt;/p>
 &lt;div class="highlight">&lt;pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;">&lt;code class="language-yaml" data-lang="yaml">&lt;span style="display:flex;">&lt;span>- &lt;span style="color:#f92672">uses&lt;/span>: &lt;span style="color:#ae81ff">actions/cache@v3&lt;/span>
 &lt;/span>&lt;/span>&lt;span style="display:flex;">&lt;span> &lt;span style="color:#f92672">with&lt;/span>:
 &lt;/span>&lt;/span>&lt;span style="display:flex;">&lt;span> &lt;span style="color:#f92672">path&lt;/span>: |&lt;span style="color:#e6db74">
@@ -119,7 +119,7 @@ FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT&amp;hellip;&lt;/del>&lt;/p>
 &lt;div class="highlight">&lt;pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;">&lt;code class="language-bash" data-lang="bash">&lt;span style="display:flex;">&lt;span>$ cargo test --locked --no-run
 &lt;/span>&lt;/span>&lt;span style="display:flex;">&lt;span> Finished test &lt;span style="color:#f92672">[&lt;/span>unoptimized + debuginfo&lt;span style="color:#f92672">]&lt;/span> target&lt;span style="color:#f92672">(&lt;/span>s&lt;span style="color:#f92672">)&lt;/span> in 0.62s
 &lt;/span>&lt;/span>&lt;span style="display:flex;">&lt;span> Executable unittests src/main.rs &lt;span style="color:#f92672">(&lt;/span>target/debug/deps/linkmapper-da17f15a9210ca29&lt;span style="color:#f92672">)&lt;/span>
-&lt;/span>&lt;/span>&lt;/code>&lt;/pre>&lt;/div>&lt;p>I&amp;rsquo;ve never seen this approach being used even though its&amp;rsquo; only downside I know of is that it completely replicates the way &lt;code>cargo&lt;/code> caches dependencies locally: if you ever had cases where &lt;code>cargo&lt;/code> didn&amp;rsquo;t pick up changes to the code introduced by &lt;code>git pull&lt;/code> or similar - there&amp;rsquo;s a non-zero chance you can encounter that on CI. Manually cleaning caches on github is fairly easy (unless you have lots of them) and you can use PR labels to conditionally disable cache usage so my guess is that this approach isn&amp;rsquo;t widely adopted because most people just don&amp;rsquo;t know about it (this is kind of confirmed by people who were reviewing the draft of this article).&lt;/p>
+&lt;/span>&lt;/span>&lt;/code>&lt;/pre>&lt;/div>&lt;p>I&amp;rsquo;ve never seen this approach being used even though its only downside I know of is that it completely replicates the way &lt;code>cargo&lt;/code> caches dependencies locally: if you ever had cases where &lt;code>cargo&lt;/code> didn&amp;rsquo;t pick up changes to the code introduced by &lt;code>git pull&lt;/code> or similar - there&amp;rsquo;s a non-zero chance you can encounter that on CI. Manually cleaning caches on github is fairly easy (unless you have lots of them) and you can use PR labels to conditionally disable cache usage so my guess is that this approach isn&amp;rsquo;t widely adopted because most people just don&amp;rsquo;t know about it (this is kind of confirmed by people who were reviewing the draft of this article).&lt;/p>
 &lt;p>&lt;strong>Except if we use &lt;code>rocksdb&lt;/code> instead of &lt;code>sled&lt;/code>&lt;/strong>&lt;/p>
 &lt;p>For some reason not including &lt;code>$CARGO_HOME/registry/src&lt;/code> to the cache leads to full recompilation of &lt;code>librocksdb-sys&lt;/code> and everything that depends on it (~I suspect &lt;code>bindgen&lt;/code> as the culprit but this needs further testing~ Edit: it turns out there&amp;rsquo;s an &lt;a href="https://github.com/rust-lang/cargo/issues/11083">issue&lt;/a> and it&amp;rsquo;s caused by &lt;code>rocksdb&lt;/code> using &lt;code>rerun-if-changed&lt;/code> on a folder in &lt;code>build.rs&lt;/code>):&lt;/p>
 &lt;div class="highlight">&lt;pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;">&lt;code class="language-bash" data-lang="bash">&lt;span style="display:flex;">&lt;span>$ cargo test --locked --no-run
@@ -187,7 +187,7 @@ FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT&amp;hellip;&lt;/del>&lt;/p>
 &lt;/span>&lt;/span>&lt;span style="display:flex;">&lt;span> - &lt;span style="color:#f92672">run&lt;/span>: &lt;span style="color:#ae81ff">cargo test --locked --no-fail-fast&lt;/span>
 &lt;/span>&lt;/span>&lt;span style="display:flex;">&lt;span> - &lt;span style="color:#f92672">run&lt;/span>: &lt;span style="color:#ae81ff">cargo clippy --locked --workspace --tests --no-deps -- -D warnings&lt;/span>
 &lt;/span>&lt;/span>&lt;/code>&lt;/pre>&lt;/div>&lt;h2 id="results">Results&lt;/h2>
-&lt;p>In the end, I&amp;rsquo;d like to bring you a comparison table of all the approaches covered here. Please note that Github Actions public runners can fluctuate in performance so I did notice some runs take up to 25% more or less time to complete without any changes to the code or action but it should still be enough to see general tendencies (it does lead to some weird results like when enabling mtime restore for &lt;code>sccache&lt;/code> action leads to 20-40s slowdown, even though mtime doesn&amp;rsquo;t affect the work done there in the slightest)&lt;/p>
+&lt;p>In the end, I&amp;rsquo;d like to bring you a comparison table of all the approaches covered here. Please note that Github Actions public runners can fluctuate in performance so I did notice some runs take up to 25% more or less time to complete without any changes to the code or action but I tried to take average results without outliers and it should still be enough to see general tendencies (it does lead to some weird results like when enabling mtime restore for &lt;code>sccache&lt;/code> action leads to 20-40s slowdown, even though mtime doesn&amp;rsquo;t affect the work done there in the slightest)&lt;/p>
 &lt;h3 id="cache-profile-overview">&lt;code>cache profile&lt;/code> overview&lt;/h3>
 &lt;p>I already tried to reference each profile in the article but it probably won&amp;rsquo;t hurt to also have these definitions next to where they are used so you don&amp;rsquo;t have to look for them each time&lt;/p>
 &lt;ul>
@@ -214,47 +214,47 @@ FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT&amp;hellip;&lt;/del>&lt;/p>
 &lt;tr>
 &lt;td>home&lt;/td>
 &lt;td>86 mb&lt;/td>
-&lt;td>15s&lt;/td>
-&lt;td>2s&lt;/td>
-&lt;td>1m 50s&lt;/td>
-&lt;td>1m 27s&lt;/td>
-&lt;td>1m 27s&lt;/td>
+&lt;td>~15s&lt;/td>
+&lt;td>~2s&lt;/td>
+&lt;td>~2m&lt;/td>
+&lt;td>~1m 30s&lt;/td>
+&lt;td>~1m 30s&lt;/td>
 &lt;/tr>
 &lt;tr>
 &lt;td>home_and_target&lt;/td>
 &lt;td>250 mb&lt;/td>
-&lt;td>15s&lt;/td>
-&lt;td>8s&lt;/td>
-&lt;td>2m 8s&lt;/td>
-&lt;td>31s&lt;/td>
-&lt;td>29s&lt;/td>
+&lt;td>~15s&lt;/td>
+&lt;td>~8s&lt;/td>
+&lt;td>~2m&lt;/td>
+&lt;td>~31s&lt;/td>
+&lt;td>~30s&lt;/td>
 &lt;/tr>
 &lt;tr>
 &lt;td>full&lt;/td>
 &lt;td>290 mb&lt;/td>
-&lt;td>15s&lt;/td>
-&lt;td>13s&lt;/td>
-&lt;td>1m 56s&lt;/td>
-&lt;td>38s&lt;/td>
-&lt;td>31s&lt;/td>
+&lt;td>~15s&lt;/td>
+&lt;td>~13s&lt;/td>
+&lt;td>~2m&lt;/td>
+&lt;td>~35s&lt;/td>
+&lt;td>~33s&lt;/td>
 &lt;/tr>
 &lt;tr>
 &lt;td>swatinem&lt;/td>
 &lt;td>250 mb&lt;/td>
-&lt;td>15s&lt;/td>
-&lt;td>9s&lt;/td>
-&lt;td>1m 49s&lt;/td>
-&lt;td>34s&lt;/td>
-&lt;td>27s&lt;/td>
+&lt;td>~15s&lt;/td>
+&lt;td>~9s&lt;/td>
+&lt;td>~2m&lt;/td>
+&lt;td>~31s&lt;/td>
+&lt;td>~30s&lt;/td>
 &lt;/tr>
 &lt;tr>
 &lt;td>sccache&lt;/td>
 &lt;td>170 mb&lt;/td>
-&lt;td>25s&lt;/td>
-&lt;td>5s&lt;/td>
-&lt;td>2m 5s&lt;/td>
-&lt;td>1m 1s&lt;/td>
-&lt;td>1m 18s&lt;/td>
+&lt;td>~25s&lt;/td>
+&lt;td>~5s&lt;/td>
+&lt;td>~2m&lt;/td>
+&lt;td>~1m&lt;/td>
+&lt;td>~1m&lt;/td>
 &lt;/tr>
 &lt;/tbody>
 &lt;/table>
@@ -275,49 +275,51 @@ FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT&amp;hellip;&lt;/del>&lt;/p>
 &lt;tr>
 &lt;td>home&lt;/td>
 &lt;td>100 mb&lt;/td>
-&lt;td>15s&lt;/td>
-&lt;td>2s&lt;/td>
-&lt;td>8m 53s&lt;/td>
-&lt;td>8m 26s&lt;/td>
-&lt;td>8m 38s&lt;/td>
+&lt;td>~15s&lt;/td>
+&lt;td>~2s&lt;/td>
+&lt;td>~9.5m&lt;/td>
+&lt;td>~9m&lt;/td>
+&lt;td>~8.5m&lt;/td>
 &lt;/tr>
 &lt;tr>
 &lt;td>home_and_target&lt;/td>
 &lt;td>780 mb&lt;/td>
-&lt;td>15s&lt;/td>
-&lt;td>25s&lt;/td>
-&lt;td>10m 11s&lt;/td>
-&lt;td>10m 40s&lt;/td>
-&lt;td>8m 28s&lt;/td>
+&lt;td>~15s&lt;/td>
+&lt;td>~25s&lt;/td>
+&lt;td>~10m&lt;/td>
+&lt;td>~8.5m&lt;/td>
+&lt;td>~8.5m&lt;/td>
 &lt;/tr>
 &lt;tr>
 &lt;td>full&lt;/td>
 &lt;td>830 mb&lt;/td>
-&lt;td>15s&lt;/td>
-&lt;td>26s&lt;/td>
-&lt;td>9m 38s&lt;/td>
-&lt;td>56s&lt;/td>
-&lt;td>47s&lt;/td>
+&lt;td>~15s&lt;/td>
+&lt;td>~26s&lt;/td>
+&lt;td>~10m&lt;/td>
+&lt;td>~50s&lt;/td>
+&lt;td>~48s&lt;/td>
 &lt;/tr>
 &lt;tr>
 &lt;td>swatinem&lt;/td>
 &lt;td>730 mb&lt;/td>
-&lt;td>15s&lt;/td>
-&lt;td>23s&lt;/td>
-&lt;td>9m 0s&lt;/td>
-&lt;td>8m 26s&lt;/td>
-&lt;td>10m 16s&lt;/td>
+&lt;td>~15s&lt;/td>
+&lt;td>~23s&lt;/td>
+&lt;td>~10m&lt;/td>
+&lt;td>~8.5m&lt;/td>
+&lt;td>~8.5m&lt;/td>
 &lt;/tr>
 &lt;tr>
 &lt;td>sccache&lt;/td>
 &lt;td>490 mb&lt;/td>
-&lt;td>25s&lt;/td>
-&lt;td>10s&lt;/td>
-&lt;td>13m 58s&lt;/td>
-&lt;td>2m 10s&lt;/td>
-&lt;td>2m 50s&lt;/td>
+&lt;td>~25s&lt;/td>
+&lt;td>~10s&lt;/td>
+&lt;td>~11m&lt;/td>
+&lt;td>~2m&lt;/td>
+&lt;td>~2m&lt;/td>
 &lt;/tr>
 &lt;/tbody>
 &lt;/table>
-&lt;p>As you can notice, until &lt;a href="https://github.com/rust-lang/cargo/issues/11083">this&lt;/a> is resolved, the only ways to save time caching packages like &lt;code>rocksdb&lt;/code> are caching the whole &lt;code>$CARGO_HOME&lt;/code> folder or using a third-party tool like &lt;code>sccache&lt;/code>&lt;/p>
+&lt;h2 id="conclusions">Conclusions&lt;/h2>
+&lt;p>As you can notice, until &lt;del>&lt;a href="https://github.com/rust-lang/cargo/issues/11083">this&lt;/a> is resolved&lt;/del> &lt;a href="https://github.com/rust-lang/cargo/pull/11613">the fix&lt;/a> is available in the version/channel you&amp;rsquo;re using (1.69+), the only ways to save time caching packages like &lt;code>rocksdb&lt;/code> are caching the whole &lt;code>$CARGO_HOME&lt;/code> folder or using a third-party tool like &lt;a href="https://github.com/mozilla/sccache">sccache&lt;/a>&lt;/p>
+&lt;p>Restoring mtime of helps to avoid rebuilding of your own code (if you have a lot of it this can save quite some time, not the case of my test repo) but it won&amp;rsquo;t change anything if your dependencies get rebuilt first&lt;/p>
 &lt;p>&lt;strong>Shouts out to &lt;a href="https://hachyderm.io/@predrag">Predrag Gruevski&lt;/a>, &lt;a href="https://github.com/yneth">Anthony Bondarenko&lt;/a>, and a few folks who preferred to remain unnamed, for feedback on drafts of this post. Any mistakes are mine alone.&lt;/strong>&lt;/p></content></item></channel></rss>
